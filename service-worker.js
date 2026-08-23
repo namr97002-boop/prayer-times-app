@@ -1,4 +1,4 @@
-const VERSION = "islamic-app-v2";
+const VERSION = "islamic-app-v3";
 
 const APP_CACHE = VERSION + "-app";
 
