@@ -1138,7 +1138,7 @@
             <span class="footer-dev">تطبيق المسلم الذكي</span>
         </div>
         <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
-            <span class="footer-name">برمجة وتطوير نصر العامري</span>
+            <span class="footer-name">برمجة وتطوير: نصر العامري</span>
             <span style="opacity: 0.3;">|</span>
             <span style="opacity: 0.6;">2026</span>
         </div>
@@ -1386,39 +1386,51 @@
                 return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
             }
 
-            // ===== التاريخ الهجري الصحيح: أم القرى عبر Intl =====
+            // ===== التاريخ الهجري: API عند توفر الإنترنت + أم القرى محلياً =====
             function gregorianToHijri(gy, gm, gd) {
                 const date = new Date(gy, gm - 1, gd, 12, 0, 0);
-                const fmt = new Intl.DateTimeFormat(
-                    'ar-SA-u-ca-islamic-umalqura',
-                    { day: 'numeric', month: 'long', year: 'numeric' }
-                );
-                const parts = Object.fromEntries(
-                    fmt.formatToParts(date)
-                        .filter(p => p.type !== 'literal')
-                        .map(p => [p.type, p.value])
-                );
-
-                const day = parts.day || '';
-                const monthName = parts.month || '';
-                const year = parts.year || '';
-
+                const parts = new Intl.DateTimeFormat('ar-SA-u-ca-islamic-umalqura', {
+                    day: 'numeric', month: 'long', year: 'numeric'
+                }).formatToParts(date);
+                const obj = {};
+                for (const p of parts) if (p.type !== 'literal') obj[p.type] = p.value;
                 return {
-                    day,
-                    month: monthName,
-                    monthName,
-                    year,
-                    formatted: `${day} ${monthName} ${year} هـ`
+                    day: obj.day,
+                    month: obj.month,
+                    monthName: obj.month,
+                    year: obj.year,
+                    formatted: `${obj.day} ${obj.month} ${obj.year} هـ`
                 };
             }
 
-            // لا نعتمد على API للتاريخ الهجري؛ حتى يعمل بدقة أيضاً بدون إنترنت
             async function getHijriDate(date) {
-                return gregorianToHijri(
-                    date.getFullYear(),
-                    date.getMonth() + 1,
-                    date.getDate()
-                );
+                try {
+                    if (!navigator.onLine) throw new Error('offline');
+                    const year = date.getFullYear();
+                    const month = String(date.getMonth() + 1).padStart(2, '0');
+                    const day = String(date.getDate()).padStart(2, '0');
+                    const response = await fetch(`https://api.aladhan.com/v1/gToH/${year}-${month}-${day}`, { cache: 'no-store' });
+                    if (!response.ok) throw new Error('API failed');
+                    const data = await response.json();
+                    if (data.code !== 200 || !data.data?.hijri) throw new Error('API failed');
+                    const h = data.data.hijri;
+                    return {
+                        day: h.day,
+                        month: h.month.en,
+                        monthAr: h.month.ar,
+                        year: h.year,
+                        formatted: `${h.day} ${h.month.ar} ${h.year} هـ`
+                    };
+                } catch (error) {
+                    const h = gregorianToHijri(date.getFullYear(), date.getMonth() + 1, date.getDate());
+                    return {
+                        day: h.day,
+                        month: h.month,
+                        monthAr: h.month,
+                        year: h.year,
+                        formatted: h.formatted
+                    };
+                }
             }
 
             // ===== متغيرات التاريخ الهجري =====
@@ -1533,14 +1545,30 @@
                     });
                 }
 
-                // تحويل محلي سريع ودقيق بدون 42 طلب API
+                // جلب الأيام الهجرية لكل يوم (مع fallback سريع)
                 for (let i = 0; i < days.length; i++) {
-                    const h = gregorianToHijri(
-                        days[i].date.getFullYear(),
-                        days[i].date.getMonth() + 1,
-                        days[i].date.getDate()
-                    );
-                    days[i].hijri = h.day;
+                    try {
+                        const h = await getHijriDate(days[i].date);
+                        if (h) {
+                            days[i].hijri = h.day;
+                        } else {
+                            // استخدام الخوارزمية المحلية
+                            const fallback = gregorianToHijri(
+                                days[i].date.getFullYear(),
+                                days[i].date.getMonth() + 1,
+                                days[i].date.getDate()
+                            );
+                            days[i].hijri = fallback.day;
+                        }
+                    } catch {
+                        // في حالة الخطأ، نستخدم الخوارزمية المحلية
+                        const fallback = gregorianToHijri(
+                            days[i].date.getFullYear(),
+                            days[i].date.getMonth() + 1,
+                            days[i].date.getDate()
+                        );
+                        days[i].hijri = fallback.day;
+                    }
                 }
 
                 calendarDays.value = days;
@@ -1571,165 +1599,50 @@
             }
 
             // ===== باقي الدوال (مواقيت الصلاة، أذكار، تسبيح، قبلة، قرآن) =====
-            // ===== مواقيت الصلاة محلياً بدون إنترنت =====
-            // حساب فلكي محلي قريب من طريقة أم القرى:
-            // الفجر 18.5°، العشاء 90 دقيقة بعد المغرب (مع حد 120 دقيقة في رمضان/المناطق المناسبة).
-            function dtr(deg) { return deg * Math.PI / 180; }
-            function rtd(rad) { return rad * 180 / Math.PI; }
-
-            function solarPosition(jd) {
-                const D = jd - 2451545.0;
-                const g = dtr((357.529 + 0.98560028 * D) % 360);
-                const q = (280.459 + 0.98564736 * D) % 360;
-                const L = dtr((q + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) % 360);
-                const e = dtr(23.439 - 0.00000036 * D);
-
-                const decl = Math.asin(Math.sin(e) * Math.sin(L));
-                const ra = Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L)) / 15;
-
-                return {
-                    declination: rtd(decl),
-                    equation: (q / 15) - ((ra + 24) % 24)
-                };
-            }
-
-            function julianDateLocal(date) {
-                return (date.getTime() / 86400000) + 2440587.5;
-            }
-
-            function timeForAngle(angle, date, latitude, longitude, direction) {
-                const jd = julianDateLocal(
-                    new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12, 0, 0)
-                );
-                const sun = solarPosition(jd);
-
-                const lat = dtr(latitude);
-                const decl = dtr(sun.declination);
-
-                const cosH =
-                    (Math.cos(dtr(90 + angle)) / (Math.cos(lat) * Math.cos(decl))) -
-                    Math.tan(lat) * Math.tan(decl);
-
-                if (cosH < -1 || cosH > 1) return null;
-
-                const H = rtd(Math.acos(cosH)) / 15;
-                return 12 + (direction === 'ccw' ? -H : H) - sun.equation - longitude / 15;
-            }
-
-            function solarNoon(date, longitude) {
-                const jd = julianDateLocal(
-                    new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12, 0, 0)
-                );
-                const sun = solarPosition(jd);
-                return 12 - sun.equation - longitude / 15;
-            }
-
-            function asrTime(date, latitude, longitude) {
-                const jd = julianDateLocal(
-                    new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12, 0, 0)
-                );
-                const sun = solarPosition(jd);
-                const lat = dtr(latitude);
-                const decl = dtr(sun.declination);
-
-                // العصر: طول الظل = ظل الزوال + 1 (المذهب الشافعي/المالكي/الحنبلي)
-                const angle = rtd(Math.atan(1 / (1 + Math.tan(Math.abs(lat - decl)))));
-                return timeForAngle(angle, date, latitude, longitude, 'cw');
-            }
-
-            function normalizeHour(h) {
-                if (h == null || !Number.isFinite(h)) return null;
-                return ((h % 24) + 24) % 24;
-            }
-
-            function formatTime(h) {
-                if (h == null) return "--:--";
-                h = normalizeHour(h);
-                const hh = Math.floor(h);
-                const mm = Math.floor((h - hh) * 60);
-                return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
-            }
-
-            function calculatePrayerTimesOffline(date, latitude, longitude) {
-                const noon = solarNoon(date, longitude);
-
-                // زوايا شائعة للحساب، مع عشاء أم القرى = 90 دقيقة بعد المغرب.
-                const fajr = timeForAngle(18.5, date, latitude, longitude, 'ccw');
-                const sunrise = timeForAngle(0.833, date, latitude, longitude, 'ccw');
-                const sunset = timeForAngle(0.833, date, latitude, longitude, 'cw');
-                const maghrib = sunset;
-                const asr = asrTime(date, latitude, longitude);
-
-                let isha = sunset + 1.5; // احتياط داخلي
-                if (sunset != null) isha = sunset + 1.5;
-
-                // في أم القرى العشاء غالباً 90 دقيقة بعد المغرب،
-                // وفي رمضان قد تختلف بعض الجداول؛ يمكن تعديلها لاحقاً من الإعدادات.
-                return [
-                    { key: "Fajr", label: "الفجر", time: formatTime(fajr), minutes: fajr * 60 },
-                    { key: "Sunrise", label: "الشروق", time: formatTime(sunrise), minutes: sunrise * 60 },
-                    { key: "Dhuhr", label: "الظهر", time: formatTime(noon), minutes: noon * 60 },
-                    { key: "Asr", label: "العصر", time: formatTime(asr), minutes: asr * 60 },
-                    { key: "Maghrib", label: "المغرب", time: formatTime(maghrib), minutes: maghrib * 60 },
-                    { key: "Isha", label: "العشاء", time: formatTime(isha), minutes: isha * 60 }
-                ].map(p => ({
-                    ...p,
-                    minutes: Number.isFinite(p.minutes) ? p.minutes : 0,
-                    current: false
-                }));
-            }
-
             async function buildPrayerTimes() {
                 loading.value = true;
                 try {
-                    let lat = Number(gpsLat.value);
-                    let lon = Number(gpsLon.value);
-
-                    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-                        const coords = cityCoords[city.value];
-                        if (coords) {
-                            lat = coords[0];
-                            lon = coords[1];
-                        }
-                    }
-
-                    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-                        lat = 15.3694;
-                        lon = 44.1910;
-                    }
-
-                    const today = new Date();
-
-                    prayers.value = calculatePrayerTimesOffline(
-                        today,
-                        lat,
-                        lon
-                    );
-
+                    const url =
+                        `https://api.aladhan.com/v1/timingsByCity?city=${encodeURIComponent(city.value)}&country=Yemen&method=4`;
+                    const response = await fetch(url);
+                    if (!response.ok) throw new Error('فشل في جلب المواقيت');
+                    const data = await response.json();
+                    if (data.code !== 200) throw new Error('خطأ في الاستجابة');
+                    const timings = data.data.timings;
+                    prayers.value = [
+                        { key: "Fajr", label: "الفجر", time: timings.Fajr },
+                        { key: "Sunrise", label: "الشروق", time: timings.Sunrise },
+                        { key: "Dhuhr", label: "الظهر", time: timings.Dhuhr },
+                        { key: "Asr", label: "العصر", time: timings.Asr },
+                        { key: "Maghrib", label: "المغرب", time: timings.Maghrib },
+                        { key: "Isha", label: "العشاء", time: timings.Isha }
+                    ].map(p => {
+                        const parts = p.time.split(':');
+                        const minutes = Number(parts[0]) * 60 + Number(parts[1]);
+                        return { ...p, minutes, current: false };
+                    });
                     updateCurrent();
-
                     localStorage.setItem("prayerTimes", JSON.stringify(prayers.value));
                     localStorage.setItem("prayerDate", getTodayKey());
-                    localStorage.setItem("prayerLat", String(lat));
-                    localStorage.setItem("prayerLon", String(lon));
-
                     const now = new Date();
-                    lastUpdate.value = now.toLocaleTimeString("ar-YE", {
-                        hour: '2-digit',
-                        minute: '2-digit'
-                    });
+                    lastUpdate.value = now.toLocaleTimeString("ar-YE", { hour: '2-digit', minute: '2-digit' });
                     localStorage.setItem("lastUpdate", lastUpdate.value);
-
-                    console.log("تم حساب مواقيت الصلاة بدون إنترنت:", prayers.value);
                 } catch (error) {
-                    console.error("خطأ في الحساب المحلي:", error);
-
+                    console.error(error);
                     const saved = localStorage.getItem("prayerTimes");
                     if (saved) {
-                        try {
-                            prayers.value = JSON.parse(saved);
-                            updateCurrent();
-                        } catch {}
+                        prayers.value = JSON.parse(saved);
+                        updateCurrent();
+                    } else {
+                        prayers.value = [
+                            { key: "Fajr", label: "الفجر", time: "05:00", minutes: 300, current: false },
+                            { key: "Sunrise", label: "الشروق", time: "06:30", minutes: 390, current: false },
+                            { key: "Dhuhr", label: "الظهر", time: "12:00", minutes: 720, current: false },
+                            { key: "Asr", label: "العصر", time: "15:30", minutes: 930, current: false },
+                            { key: "Maghrib", label: "المغرب", time: "18:00", minutes: 1080, current: false },
+                            { key: "Isha", label: "العشاء", time: "19:30", minutes: 1170, current: false }
+                        ];
+                        updateCurrent();
                     }
                 } finally {
                     loading.value = false;
@@ -1751,10 +1664,14 @@
                 if (!prayers.value.length) return { name: "--", minutes: 0 };
                 const now = new Date();
                 const current = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
-                for (const p of prayers.value) {
-                    if (p.minutes > current) return { name: p.label, minutes: p.minutes };
+                // الشروق ليس صلاة؛ نبحث فقط في الصلوات الخمس.
+                const prayerKeys = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"];
+                for (const key of prayerKeys) {
+                    const p = prayers.value.find(x => x.key === key);
+                    if (p && Number(p.minutes) > current) return { name: p.label, minutes: Number(p.minutes) };
                 }
-                return { name: prayers.value[0].label, minutes: prayers.value[0].minutes + 1440 };
+                const fajr = prayers.value.find(x => x.key === "Fajr");
+                return { name: fajr ? fajr.label : "الفجر", minutes: fajr ? Number(fajr.minutes) + 1440 : 1440 };
             });
 
             function updateCountdown() {
@@ -1779,114 +1696,70 @@
                 }
             }
 
-            // ===== نظام الأذان =====
             let adhanAudio = null;
-            let adhanUnlocked = false;
-
-            function prepareAdhanAudio() {
-                try {
-                    if (!adhanAudio) {
-                        adhanAudio = new Audio("./adhan.mp3");
-                        adhanAudio.preload = "auto";
-                        adhanAudio.volume = 0.9;
+            function playAdhanAudio() {
+                return new Promise((resolve) => {
+                    try {
+                        if (!adhanAudio) {
+                            adhanAudio = new Audio("./adhan.mp3");
+                            adhanAudio.preload = "auto";
+                            adhanAudio.volume = 0.9;
+                        }
+                        adhanAudio.currentTime = 0;
+                        const promise = adhanAudio.play();
+                        if (promise && promise.then) {
+                            promise.then(() => resolve(true)).catch(() => resolve(false));
+                        } else {
+                            resolve(true);
+                        }
+                    } catch {
+                        resolve(false);
                     }
-                    adhanAudio.load();
-                    return true;
-                } catch (e) {
-                    console.error("تعذر تجهيز ملف الأذان:", e);
-                    return false;
-                }
-            }
-
-            async function unlockAdhanAudio() {
-                try {
-                    if (!adhanAudio) prepareAdhanAudio();
-
-                    // محاولة فتح الصوت بعد تفاعل المستخدم
-                    adhanAudio.muted = true;
-                    await adhanAudio.play();
-                    adhanAudio.pause();
-                    adhanAudio.currentTime = 0;
-                    adhanAudio.muted = false;
-                    adhanUnlocked = true;
-                    return true;
-                } catch (e) {
-                    console.warn("لم يتم فتح الصوت بعد:", e);
-                    return false;
-                }
-            }
-
-            async function playAdhanAudio() {
-                try {
-                    if (!adhanAudio) prepareAdhanAudio();
-
-                    // الملف المحلي أفضل بكثير من رابط خارجي، ويعمل مع PWA بعد تخزينه.
-                    adhanAudio.currentTime = 0;
-                    adhanAudio.muted = false;
-                    adhanAudio.volume = 0.9;
-                    await adhanAudio.play();
-                    adhanUnlocked = true;
-                    return true;
-                } catch (e) {
-                    console.warn("تعذر تشغيل الأذان:", e);
-                    return false;
-                }
+                });
             }
 
             async function playAdhanManual() {
                 adhanPlaying.value = true;
-                await unlockAdhanAudio();
                 const success = await playAdhanAudio();
-
                 if (!success) {
-                    alert("لم يعمل الأذان. تأكد من وجود ملف adhan.mp3 بجانب index.html، ثم اضغط اختبار الأذان مرة واحدة.");
+                    alert("فشل تشغيل الأذان. تأكد من وجود ملف adhan.mp3");
                 }
-
                 setTimeout(() => { adhanPlaying.value = false; }, 3000);
             }
 
-            async function playAdhanAuto(prayer) {
-                if (!adhanAutoEnabled.value) return false;
-
-                const success = await playAdhanAudio();
-                if (success) {
-                    sendNotification(prayer);
-                    console.log(`تم تشغيل أذان ${prayer.label}`);
-                } else {
-                    sendNotification(prayer);
-                    console.warn(`تعذر تشغيل صوت أذان ${prayer.label}`);
-                }
-                return success;
+            function playAdhanAuto(prayer) {
+                if (!adhanAutoEnabled.value) return;
+                playAdhanAudio();
+                sendNotification(prayer);
+                console.log(`تم أذان ${prayer.label} بنجاح`);
             }
 
             async function requestNotificationPermission() {
-                if (!("Notification" in window)) return;
-
+                if (!("Notification" in window)) {
+                    console.log("المتصفح لا يدعم الإشعارات");
+                    return;
+                }
                 if (Notification.permission === "granted") {
                     adhanPermission.value = true;
                     return;
                 }
-
-                if (Notification.permission === "denied") return;
-
-                try {
-                    const permission = await Notification.requestPermission();
-                    adhanPermission.value = permission === "granted";
-                } catch {}
+                if (Notification.permission === "denied") {
+                    return;
+                }
+                const permission = await Notification.requestPermission();
+                adhanPermission.value = permission === "granted";
             }
 
             function sendNotification(prayer) {
                 if (!adhanPermission.value) return;
-
                 try {
                     const notification = new Notification("وقت الصلاة", {
                         body: `حان الآن وقت ${prayer.label}`,
                         icon: "icons/icon-192.png",
-                        tag: `adhan-${prayer.key}`,
+                        tag: prayer.key,
                         requireInteraction: true,
-                        vibrate: [300, 150, 300]
+                        vibrate: [200, 100, 200]
                     });
-
                     notification.onclick = function() {
                         window.focus();
                         currentTab.value = "prayer";
@@ -1897,36 +1770,21 @@
 
             async function checkAdhanTime() {
                 if (!adhanAutoEnabled.value || !prayers.value.length) return;
-
                 const now = new Date();
-                const currentMinutes =
-                    now.getHours() * 60 +
-                    now.getMinutes() +
-                    now.getSeconds() / 60;
-
+                const currentMinutes = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
                 for (const prayer of prayers.value) {
-                    // نافذة دقيقة ونصف بدلاً من 30 ثانية حتى لا نفوّت الأذان بسبب تعليق مؤقت.
-                    if (Math.abs(currentMinutes - prayer.minutes) <= 1.5) {
+                    if (prayer.key === "Sunrise") continue;
+                    if (Math.abs(currentMinutes - prayer.minutes) <= 1.0) {
                         const todayKey = getTodayKey();
                         const key = `${todayKey}_${prayer.key}`;
-
                         if (!adhanPlayedToday.value[key]) {
-                            const success = await playAdhanAuto(prayer);
-
-                            // لا نسجل الأذان كمشغّل إلا بعد محاولة التشغيل.
-                            // الإشعار يبقى وسيلة احتياطية إذا منع النظام الصوت.
-                            adhanPlayedToday.value[key] = true;
-
-                            const played = JSON.parse(
-                                localStorage.getItem("adhanPlayed") || "{}"
-                            );
-                            played[key] = true;
-                            localStorage.setItem("adhanPlayed", JSON.stringify(played));
-
-                            if (!success) {
-                                console.warn(
-                                    `وقت ${prayer.label} وصل، لكن النظام منع تشغيل الصوت تلقائياً.`
-                                );
+                            const success = await playAdhanAudio();
+                            if (success) {
+                                sendNotification(prayer);
+                                adhanPlayedToday.value[key] = true;
+                                const played = JSON.parse(localStorage.getItem("adhanPlayed") || "{}");
+                                played[key] = true;
+                                localStorage.setItem("adhanPlayed", JSON.stringify(played));
                             }
                         }
                     }
@@ -1954,38 +1812,20 @@
                 localStorage.setItem("adhanPlayed", JSON.stringify(newState));
             }
 
-            async function toggleAdhanAuto() {
-                if (!adhanAutoEnabled.value) {
-                    adhanAutoEnabled.value = true;
-                    localStorage.setItem("adhanAutoEnabled", "true");
-
-                    prepareAdhanAudio();
-                    await unlockAdhanAudio();
-                    await requestNotificationPermission();
-
-                    alert(
-                        "تم تفعيل الأذان التلقائي.\n\n" +
-                        "اترك التطبيق مفتوحاً في الواجهة للحصول على أفضل موثوقية."
-                    );
-                } else {
-                    adhanAutoEnabled.value = false;
-                    localStorage.setItem("adhanAutoEnabled", "false");
-                }
+            function toggleAdhanAuto() {
+                adhanAutoEnabled.value = !adhanAutoEnabled.value;
+                localStorage.setItem("adhanAutoEnabled", adhanAutoEnabled.value);
             }
 
             async function testAdhan() {
-                prepareAdhanAudio();
-                await unlockAdhanAudio();
-
                 const success = await playAdhanAudio();
                 await requestNotificationPermission();
-                sendNotification({ key: "test", label: "اختبار الأذان" });
-
-                alert(
-                    success
-                        ? "تم تشغيل الأذان بنجاح."
-                        : "فشل تشغيل الأذان. تأكد من وجود adhan.mp3 بجانب index.html."
-                );
+                if (success) {
+                    sendNotification({ key: "test", label: "اختبار الأذان" });
+                    alert("تم تشغيل الأذان بنجاح من الملف المحلي وبدون إنترنت.");
+                } else {
+                    alert("فشل تشغيل الأذان. تأكد أن ملف adhan.mp3 موجود بجانب index.html.");
+                }
             }
 
             function detectLocation() {
@@ -2550,20 +2390,6 @@
             });
             window.addEventListener("offline", () => { online.value = false; });
 
-            // عند العودة للتطبيق بعد أن كان بالخلفية، افحص الأذان فوراً.
-            document.addEventListener("visibilitychange", () => {
-                if (!document.hidden) {
-                    updateCountdown();
-                    checkAdhanTime();
-                    buildPrayerTimes();
-                }
-            });
-
-            window.addEventListener("focus", () => {
-                updateCountdown();
-                checkAdhanTime();
-            });
-
             window.addEventListener("beforeinstallprompt", event => {
                 event.preventDefault();
                 deferredInstall = event;
@@ -2573,7 +2399,7 @@
             // ===== دورة الحياة =====
             onMounted(() => {
                 checkTasbeehDate();
-                prepareAdhanAudio();
+                requestNotificationPermission();
                 restoreAdhanState();
                 resetAdhanState();
                 buildPrayerTimes();
@@ -2581,11 +2407,12 @@
                 setInterval(updateCountdown, 1000);
                 setInterval(() => {
                     checkAdhanTime();
-                }, 5000);
-                // المواقيت تُحسب محلياً ولا تحتاج إلى الإنترنت.
+                }, 10000);
                 setInterval(() => {
-                    buildPrayerTimes();
-                }, 60 * 60 * 1000);
+                    if (navigator.onLine) {
+                        buildPrayerTimes();
+                    }
+                }, 5 * 60 * 1000);
                 checkQuranStatus();
                 restoreLastSurah();
                 restoreManualCoords();
