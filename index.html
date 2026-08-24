@@ -1202,6 +1202,29 @@
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
+
+        /* إعدادات الصلاة */
+        .prayer-settings-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+        .prayer-settings-grid .full-width {
+            grid-column: 1 / -1;
+        }
+        .prayer-settings-grid label {
+            color: #9db7c0;
+            font-size: .75rem;
+            display: block;
+            margin-bottom: 3px;
+        }
+        .prayer-settings-grid .input {
+            font-size: .85rem;
+            padding: 8px 12px;
+        }
+        .prayer-settings-grid select.input {
+            appearance: auto;
+        }
     </style>
 </head>
 <body>
@@ -1270,10 +1293,49 @@
 
                     <button v-if="installAvailable" class="install" @click="installApp">📲 تثبيت التطبيق</button>
 
+                    <!-- ===== إعدادات الصلاة المتقدمة ===== -->
                     <div class="settings">
                         <div class="settings-title">⚙️ إعدادات المدينة</div>
                         <input class="input" v-model="cityInput" placeholder="اسم المدينة: مثل صنعاء">
                         <button class="save" @click="saveCity">💾 حفظ المدينة</button>
+                    </div>
+
+                    <div class="settings">
+                        <div class="settings-title">⚙️ إعدادات الصلاة المتقدمة</div>
+                        <div class="prayer-settings-grid">
+                            <div class="full-width">
+                                <label>🌍 البلد</label>
+                                <input class="input" v-model="countryInput" placeholder="اسم البلد: مثل Yemen">
+                            </div>
+                            <div class="full-width">
+                                <label>📏 طريقة الحساب</label>
+                                <select v-model="calculationMethod" class="input">
+                                    <option value="1">طريقة أمريكا الشمالية</option>
+                                    <option value="2">طريقة الاتحاد الإسلامي</option>
+                                    <option value="3">طريقة الأمة الإسلامية</option>
+                                    <option value="4" selected>رابطة العالم الإسلامي</option>
+                                    <option value="5">طريقة مكة المكرمة</option>
+                                    <option value="7">طريقة مصر</option>
+                                    <option value="8">طريقة البحرين</option>
+                                    <option value="9">طريقة الكويت</option>
+                                    <option value="10">طريقة قطر</option>
+                                    <option value="11">طريقة الإمارات</option>
+                                    <option value="12">طريقة إيران</option>
+                                    <option value="13">طريقة باكستان</option>
+                                    <option value="14">طريقة تركيا</option>
+                                    <option value="15">طريقة روسيا</option>
+                                    <option value="16">طريقة سنغافورة</option>
+                                    <option value="17">طريقة جنوب أفريقيا</option>
+                                    <option value="18">طريقة سوريا</option>
+                                    <option value="19">طريقة تونس</option>
+                                    <option value="20">طريقة الجزائر</option>
+                                    <option value="21">طريقة المغرب</option>
+                                    <option value="22">طريقة ماليزيا</option>
+                                    <option value="23">طريقة إندونيسيا</option>
+                                </select>
+                            </div>
+                            <button class="save full-width" @click="savePrayerSettings">💾 حفظ الإعدادات وتحديث المواقيت</button>
+                        </div>
                     </div>
 
                     <button class="save" @click="scheduleAndroidAlarms" style="margin-top: 10px; background: #2f8a53; color: white;">
@@ -1771,246 +1833,7 @@
 
     <script>
         // ============================================================
-        // 1. إدارة قاعدة البيانات (IndexedDB)
-        // ============================================================
-
-        class DatabaseManager {
-            constructor() {
-                this.dbName = 'SmartMuslimDB';
-                this.dbVersion = 2;
-                this.db = null;
-                this.ready = false;
-            }
-
-            async open() {
-                return new Promise((resolve, reject) => {
-                    const request = indexedDB.open(this.dbName, this.dbVersion);
-
-                    request.onupgradeneeded = (event) => {
-                        const db = event.target.result;
-                        
-                        // 1. التفاسير
-                        if (!db.objectStoreNames.contains('tafsir')) {
-                            const store = db.createObjectStore('tafsir', { keyPath: 'id' });
-                            store.createIndex('ayahKey', 'ayahKey', { unique: false });
-                            store.createIndex('mufassir', 'mufassir', { unique: false });
-                        }
-
-                        // 2. المصحف
-                        if (!db.objectStoreNames.contains('quran')) {
-                            const store = db.createObjectStore('quran', { keyPath: 'page' });
-                            store.createIndex('surah', 'surah', { unique: false });
-                        }
-
-                        // 3. الإعدادات
-                        if (!db.objectStoreNames.contains('settings')) {
-                            db.createObjectStore('settings', { keyPath: 'key' });
-                        }
-
-                        // 4. تقدم الأذكار
-                        if (!db.objectStoreNames.contains('azkarProgress')) {
-                            const store = db.createObjectStore('azkarProgress', { keyPath: 'id' });
-                            store.createIndex('date', 'date', { unique: false });
-                        }
-
-                        // 5. التسبيح
-                        if (!db.objectStoreNames.contains('tasbeeh')) {
-                            db.createObjectStore('tasbeeh', { keyPath: 'date' });
-                        }
-
-                        // 6. مواقيت الصلاة
-                        if (!db.objectStoreNames.contains('prayerTimes')) {
-                            db.createObjectStore('prayerTimes', { keyPath: 'date' });
-                        }
-
-                        console.log('✅ تم إنشاء قواعد البيانات بنجاح');
-                    };
-
-                    request.onsuccess = (event) => {
-                        this.db = event.target.result;
-                        this.ready = true;
-                        resolve(this.db);
-                    };
-
-                    request.onerror = (event) => {
-                        console.error('❌ فشل فتح قاعدة البيانات:', event.target.error);
-                        reject(event.target.error);
-                    };
-                });
-            }
-
-            async put(storeName, data) {
-                return new Promise((resolve, reject) => {
-                    if (!this.ready) return reject(new Error('قاعدة البيانات غير جاهزة'));
-                    const transaction = this.db.transaction(storeName, 'readwrite');
-                    const store = transaction.objectStore(storeName);
-                    const request = store.put(data);
-                    request.onsuccess = () => resolve(request.result);
-                    request.onerror = () => reject(request.error);
-                });
-            }
-
-            async get(storeName, key) {
-                return new Promise((resolve, reject) => {
-                    if (!this.ready) return reject(new Error('قاعدة البيانات غير جاهزة'));
-                    const transaction = this.db.transaction(storeName, 'readonly');
-                    const store = transaction.objectStore(storeName);
-                    const request = store.get(key);
-                    request.onsuccess = () => resolve(request.result);
-                    request.onerror = () => reject(request.error);
-                });
-            }
-
-            async delete(storeName, key) {
-                return new Promise((resolve, reject) => {
-                    if (!this.ready) return reject(new Error('قاعدة البيانات غير جاهزة'));
-                    const transaction = this.db.transaction(storeName, 'readwrite');
-                    const store = transaction.objectStore(storeName);
-                    const request = store.delete(key);
-                    request.onsuccess = () => resolve();
-                    request.onerror = () => reject(request.error);
-                });
-            }
-
-            async getAll(storeName) {
-                return new Promise((resolve, reject) => {
-                    if (!this.ready) return reject(new Error('قاعدة البيانات غير جاهزة'));
-                    const transaction = this.db.transaction(storeName, 'readonly');
-                    const store = transaction.objectStore(storeName);
-                    const request = store.getAll();
-                    request.onsuccess = () => resolve(request.result);
-                    request.onerror = () => reject(request.error);
-                });
-            }
-
-            async getByIndex(storeName, indexName, value) {
-                return new Promise((resolve, reject) => {
-                    if (!this.ready) return reject(new Error('قاعدة البيانات غير جاهزة'));
-                    const transaction = this.db.transaction(storeName, 'readonly');
-                    const store = transaction.objectStore(storeName);
-                    const index = store.index(indexName);
-                    const request = index.getAll(value);
-                    request.onsuccess = () => resolve(request.result);
-                    request.onerror = () => reject(request.error);
-                });
-            }
-
-            async count(storeName) {
-                return new Promise((resolve, reject) => {
-                    if (!this.ready) return reject(new Error('قاعدة البيانات غير جاهزة'));
-                    const transaction = this.db.transaction(storeName, 'readonly');
-                    const store = transaction.objectStore(storeName);
-                    const request = store.count();
-                    request.onsuccess = () => resolve(request.result);
-                    request.onerror = () => reject(request.error);
-                });
-            }
-        }
-
-        // ============================================================
-        // 2. إنشاء نسخة واحدة من قاعدة البيانات
-        // ============================================================
-
-        const dbManager = new DatabaseManager();
-
-        // ============================================================
-        // 3. دوال مساعدة للتعامل مع IndexedDB
-        // ============================================================
-
-        async function getData(key, defaultValue = null) {
-            try {
-                const result = await dbManager.get('settings', key);
-                return result ? result.value : defaultValue;
-            } catch (error) {
-                console.warn(`⚠️ فشل جلب البيانات (${key}):`, error);
-                return defaultValue;
-            }
-        }
-
-        async function setData(key, value) {
-            try {
-                await dbManager.put('settings', {
-                    key: key,
-                    value: value,
-                    updatedAt: Date.now()
-                });
-                return true;
-            } catch (error) {
-                console.warn(`⚠️ فشل حفظ البيانات (${key}):`, error);
-                return false;
-            }
-        }
-
-        async function getTafsir(mufassir, ayahKey) {
-            const id = `tafsir_${mufassir}_${ayahKey}`;
-            try {
-                const result = await dbManager.get('tafsir', id);
-                if (result) {
-                    return {
-                        text: result.text,
-                        source: result.source
-                    };
-                }
-                return null;
-            } catch (error) {
-                console.warn(`⚠️ فشل جلب التفسير (${ayahKey}):`, error);
-                return null;
-            }
-        }
-
-        async function saveTafsir(mufassir, ayahKey, text, source) {
-            const id = `tafsir_${mufassir}_${ayahKey}`;
-            try {
-                await dbManager.put('tafsir', {
-                    id: id,
-                    mufassir: mufassir,
-                    ayahKey: ayahKey,
-                    text: text,
-                    source: source,
-                    timestamp: Date.now()
-                });
-                return true;
-            } catch (error) {
-                console.warn(`⚠️ فشل حفظ التفسير (${ayahKey}):`, error);
-                return false;
-            }
-        }
-
-        async function getAllTafsir() {
-            try {
-                return await dbManager.getAll('tafsir');
-            } catch (error) {
-                console.warn('⚠️ فشل جلب جميع التفاسير:', error);
-                return [];
-            }
-        }
-
-        async function getQuranPage(pageNumber) {
-            try {
-                const result = await dbManager.get('quran', pageNumber);
-                return result || null;
-            } catch (error) {
-                console.warn(`⚠️ فشل جلب صفحة المصحف (${pageNumber}):`, error);
-                return null;
-            }
-        }
-
-        async function saveQuranPage(pageNumber, data) {
-            try {
-                await dbManager.put('quran', {
-                    page: pageNumber,
-                    data: data,
-                    savedAt: Date.now()
-                });
-                return true;
-            } catch (error) {
-                console.warn(`⚠️ فشل حفظ صفحة المصحف (${pageNumber}):`, error);
-                return false;
-            }
-        }
-
-        // ============================================================
-        // 4. البيانات الثابتة
+        // 1. البيانات الثابتة
         // ============================================================
 
         const azkar = {
@@ -2250,7 +2073,7 @@
         ];
 
         // ============================================================
-        // 5. تطبيق Vue
+        // 2. تطبيق Vue
         // ============================================================
 
         const { createApp, ref, computed, reactive, onMounted, onBeforeUnmount, watch, nextTick } = Vue;
@@ -2270,6 +2093,10 @@
                 const installAvailable = ref(false);
                 const lastUpdate = ref(localStorage.getItem("lastUpdate") || "");
                 let deferredInstall = null;
+
+                // ----- إعدادات الصلاة -----
+                const countryInput = ref(localStorage.getItem('country') || 'Yemen');
+                const calculationMethod = ref(Number(localStorage.getItem('calculationMethod')) || 4);
 
                 // ----- الأذان والإشعارات -----
                 const adhanPlayedToday = ref({});
@@ -2409,7 +2236,7 @@
                 };
 
                 // ============================================================
-                // دوال التفسير - النظام الجديد مع IndexedDB
+                // دوال التفسير
                 // ============================================================
 
                 async function getAllAyahsFromPage(pageNumber) {
@@ -2430,39 +2257,19 @@
                     }
                 }
 
-                // تحميل تفسير آية واحدة من API مع التخزين في IndexedDB
                 async function fetchTafsirForAyah(surah, ayah, mufassir) {
                     try {
-                        // التحقق من IndexedDB أولاً
-                        const cached = await getTafsir(mufassir, `${surah}-${ayah}`);
-                        if (cached) {
-                            return cached;
-                        }
-
-                        // إذا لم يكن موجوداً، جلب من API
                         const response = await fetch(
                             `https://api.alquran.cloud/v1/ayah/${surah}:${ayah}/ar.${mufassir}`,
                             { headers: { 'Accept': 'application/json' } }
                         );
                         if (!response.ok) throw new Error(`HTTP ${response.status}`);
                         const data = await response.json();
-                        
                         if (data.code === 200 && data.data && data.data.text) {
-                            const result = {
+                            return {
                                 text: data.data.text,
                                 source: `تفسير ${mufassirList.find(m => m.id === mufassir)?.name || mufassir}`
                             };
-                            
-                            // حفظ في IndexedDB
-                            await saveTafsir(mufassir, `${surah}-${ayah}`, result.text, result.source);
-                            
-                            // تحديث واجهة المستخدم
-                            tafsirDownloadedCount.value++;
-                            tafsirDownloadProgress.value = Math.round(
-                                (tafsirDownloadedCount.value / tafsirTotalCount.value) * 100
-                            );
-                            
-                            return result;
                         }
                         return null;
                     } catch (error) {
@@ -2471,7 +2278,6 @@
                     }
                 }
 
-                // تحميل جميع التفاسير
                 async function downloadAllTafsir() {
                     if (tafsirStatus.value === 'downloading' || tafsirStatus.value === 'completed') return;
 
@@ -2486,21 +2292,14 @@
                     tafsirError.value = '';
 
                     try {
-                        // الحصول على عدد التفاسير المحملة مسبقاً
-                        const existingTafsir = await getAllTafsir();
-                        const existingCount = existingTafsir.length;
-                        
-                        // حساب عدد الآيات الكلي (تقريباً 6236 آية)
                         const totalAyahs = 6236;
                         tafsirTotalCount.value = totalAyahs * mufassirList.length;
-                        tafsirDownloadedCount.value = existingCount;
-                        
-                        let processed = existingCount;
+                        let processed = 0;
+                        let successCount = 0;
                         let startTime = Date.now();
 
-                        // تحميل صفحة صفحة
                         const pagesToLoad = 604;
-                        const batchSize = 3;
+                        const batchSize = 5;
 
                         for (let page = 1; page <= pagesToLoad; page += batchSize) {
                             const endPage = Math.min(page + batchSize - 1, pagesToLoad);
@@ -2512,9 +2311,9 @@
                                     const key = `${ayah.surah}-${ayah.ayah}`;
                                     
                                     for (const mufassir of mufassirList) {
-                                        // التحقق مما إذا كان التفسير موجوداً بالفعل
-                                        const exists = await getTafsir(mufassir.id, key);
-                                        if (exists) {
+                                        const cacheKey = `tafsir_${mufassir.id}_${key}`;
+                                        
+                                        if (localStorage.getItem(cacheKey)) {
                                             processed++;
                                             continue;
                                         }
@@ -2522,23 +2321,24 @@
                                         const tafsir = await fetchTafsirForAyah(ayah.surah, ayah.ayah, mufassir.id);
                                         
                                         if (tafsir) {
-                                            processed++;
+                                            localStorage.setItem(cacheKey, JSON.stringify({
+                                                text: tafsir.text,
+                                                source: tafsir.source,
+                                                timestamp: Date.now()
+                                            }));
+                                            successCount++;
                                         }
                                         
-                                        // تحديث التقدم
-                                        tafsirDownloadedCount.value = processed;
-                                        tafsirDownloadProgress.value = Math.round(
-                                            (processed / tafsirTotalCount.value) * 100
-                                        );
+                                        processed++;
                                         
-                                        // تحديث الوقت المتبقي
+                                        tafsirDownloadedCount.value = successCount;
+                                        tafsirDownloadProgress.value = Math.round((processed / tafsirTotalCount.value) * 100);
+                                        
                                         const elapsed = (Date.now() - startTime) / 1000;
-                                        const remaining = (processed > 0) ? 
-                                            (elapsed / processed) * (tafsirTotalCount.value - processed) : 0;
+                                        const remaining = (processed > 0) ? (elapsed / processed) * (tafsirTotalCount.value - processed) : 0;
                                         const mins = Math.floor(remaining / 60);
                                         const secs = Math.floor(remaining % 60);
-                                        tafsirEstimatedTime.value = 
-                                            `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+                                        tafsirEstimatedTime.value = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
                                     }
                                 }
                                 
@@ -2548,11 +2348,12 @@
                             await new Promise(resolve => setTimeout(resolve, 100));
                         }
 
-                        // حساب حجم التخزين
-                        const allTafsir = await getAllTafsir();
                         let totalSize = 0;
-                        for (const item of allTafsir) {
-                            totalSize += JSON.stringify(item).length;
+                        for (let i = 0; i < localStorage.length; i++) {
+                            const key = localStorage.key(i);
+                            if (key && key.startsWith('tafsir_')) {
+                                totalSize += localStorage.getItem(key).length;
+                            }
                         }
                         tafsirStorageSize.value = totalSize > 1024 * 1024 ? 
                             `${(totalSize / (1024 * 1024)).toFixed(1)} MB` : 
@@ -2561,13 +2362,12 @@
                         tafsirStatus.value = 'completed';
                         tafsirDownloadProgress.value = 100;
                         
-                        // حفظ حالة التحميل
-                        await setData('tafsirStatus', 'completed');
-                        await setData('tafsirDownloadedCount', tafsirDownloadedCount.value);
-                        await setData('tafsirTotalCount', tafsirTotalCount.value);
-                        await setData('tafsirStorageSize', tafsirStorageSize.value);
+                        localStorage.setItem('tafsirStatus', 'completed');
+                        localStorage.setItem('tafsirDownloadedCount', successCount);
+                        localStorage.setItem('tafsirTotalCount', tafsirTotalCount.value);
+                        localStorage.setItem('tafsirStorageSize', tafsirStorageSize.value);
 
-                        alert(`✅ تم تحميل ${tafsirDownloadedCount.value} تفسير بنجاح!\nحجم التخزين: ${tafsirStorageSize.value}`);
+                        alert(`✅ تم تحميل ${successCount} تفسير بنجاح!\nحجم التخزين: ${tafsirStorageSize.value}`);
 
                     } catch (error) {
                         console.error('خطأ في تحميل التفاسير:', error);
@@ -2576,43 +2376,37 @@
                     }
                 }
 
-                // تحميل التفسير من التخزين (IndexedDB)
-                async function loadTafsirFromCache(ayahKey, mufassirId = null) {
+                function loadTafsirFromCache(ayahKey, mufassirId = null) {
                     const mufassir = mufassirId || selectedMufassir.value;
-                    tafsirLoading.value = true;
-                    tafsirError.value = '';
-
-                    try {
-                        const cached = await getTafsir(mufassir, ayahKey);
-                        
-                        if (cached) {
-                            tafsirData.text = cached.text;
-                            tafsirData.source = cached.source;
+                    const cacheKey = `tafsir_${mufassir}_${ayahKey}`;
+                    const cached = localStorage.getItem(cacheKey);
+                    
+                    if (cached) {
+                        try {
+                            const data = JSON.parse(cached);
+                            tafsirData.text = data.text;
+                            tafsirData.source = data.source;
                             tafsirLoading.value = false;
+                            tafsirError.value = '';
                             return true;
-                        } else {
-                            tafsirData.text = '';
-                            tafsirData.source = '';
-                            tafsirError.value = 'التفسير غير متوفر. يرجى تحميل التفاسير أولاً.';
-                            tafsirLoading.value = false;
-                            return false;
+                        } catch (e) {
+                            console.error('خطأ في قراءة التخزين:', e);
                         }
-                    } catch (error) {
-                        console.error('خطأ في قراءة التخزين:', error);
-                        tafsirError.value = 'خطأ في قراءة التخزين';
-                        tafsirLoading.value = false;
-                        return false;
                     }
+                    
+                    tafsirData.text = '';
+                    tafsirData.source = '';
+                    tafsirError.value = 'التفسير غير متوفر. يرجى تحميل التفاسير أولاً.';
+                    tafsirLoading.value = false;
+                    return false;
                 }
 
-                // التحقق من وجود تفسير لآية معينة
                 function hasTafsirForAyah(mufassirId) {
                     if (tafsirStatus.value !== 'completed') return false;
-                    // سيتم التحقق فعلياً عند فتح النافذة
-                    return true; // مؤقتاً
+                    const cacheKey = `tafsir_${mufassirId}_${tafsirData.ayahKey}`;
+                    return localStorage.getItem(cacheKey) !== null;
                 }
 
-                // فتح نافذة التفسير
                 async function openTafsir(ayah, index) {
                     tafsirIndex.value = index;
                     tafsirData.surah = currentSurahName.value || 'القرآن الكريم';
@@ -2627,10 +2421,9 @@
                     showTafsir.value = true;
                     tafsirLoading.value = true;
                     
-                    await loadTafsirFromCache(tafsirData.ayahKey);
+                    loadTafsirFromCache(tafsirData.ayahKey);
                 }
 
-                // التنقل بين الآيات في التفسير
                 function navigateTafsir(direction) {
                     const newIndex = tafsirIndex.value + direction;
                     if (newIndex >= 0 && newIndex < currentPageAyahs.value.length) {
@@ -2645,47 +2438,128 @@
                     }
                 }
 
-                // إغلاق نافذة التفسير
                 function closeTafsir() {
                     showTafsir.value = false;
                     tafsirData.text = '';
                     tafsirError.value = '';
                 }
 
-                // استعادة حالة التفسير من IndexedDB
-                async function restoreTafsirStatus() {
-                    try {
-                        const status = await getData('tafsirStatus');
-                        if (status === 'completed') {
-                            tafsirStatus.value = 'completed';
-                            tafsirDownloadedCount.value = Number(
-                                await getData('tafsirDownloadedCount') || 0
-                            );
-                            tafsirTotalCount.value = Number(
-                                await getData('tafsirTotalCount') || 0
-                            );
-                            tafsirStorageSize.value = await getData('tafsirStorageSize') || '0 KB';
-                            tafsirDownloadProgress.value = 100;
-                        }
-                    } catch (error) {
-                        console.warn('⚠️ فشل استعادة حالة التفسير:', error);
+                function restoreTafsirStatus() {
+                    const status = localStorage.getItem('tafsirStatus');
+                    if (status === 'completed') {
+                        tafsirStatus.value = 'completed';
+                        tafsirDownloadedCount.value = Number(localStorage.getItem('tafsirDownloadedCount') || 0);
+                        tafsirTotalCount.value = Number(localStorage.getItem('tafsirTotalCount') || 0);
+                        tafsirStorageSize.value = localStorage.getItem('tafsirStorageSize') || '0 KB';
+                        tafsirDownloadProgress.value = 100;
                     }
                 }
 
                 // ============================================================
-                // دوال الصلاة
+                // دوال الصلاة - المحسنة
                 // ============================================================
+
+                function getTodayKey() {
+                    const d = new Date();
+                    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+                }
+
+                function updateCurrent() {
+                    if (!prayers.value.length) return;
+                    const now = new Date();
+                    const current = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+                    let index = -1;
+                    
+                    // البحث عن آخر صلاة مر وقتها
+                    for (let i = 0; i < prayers.value.length; i++) {
+                        if (current >= prayers.value[i].minutes) index = i;
+                    }
+                    
+                    // إصلاح مشكلة ما بعد منتصف الليل (بين العشاء والفجر)
+                    if (index === prayers.value.length - 1) {
+                        const fajrMinutes = Number(prayers.value[0].minutes);
+                        if (current < fajrMinutes) {
+                            index = prayers.value.length - 1;
+                        }
+                    }
+                    
+                    if (index === -1 && prayers.value.length > 0) {
+                        index = prayers.value.length - 1;
+                    }
+                    
+                    prayers.value.forEach((p, i) => p.current = (i === index));
+                }
+
+                const nextPrayer = computed(() => {
+                    if (!prayers.value.length) return { name: "--", minutes: 0 };
+                    const now = new Date();
+                    const current = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+                    const prayerKeys = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"];
+                    
+                    for (const key of prayerKeys) {
+                        const p = prayers.value.find(x => x.key === key);
+                        if (p) {
+                            const minutes = Number(p.minutes);
+                            if (minutes > current) {
+                                return { name: p.label, minutes: minutes };
+                            }
+                        }
+                    }
+                    
+                    const fajr = prayers.value.find(x => x.key === "Fajr");
+                    return { 
+                        name: fajr ? fajr.label : "الفجر", 
+                        minutes: fajr ? Number(fajr.minutes) + 1440 : 1440 
+                    };
+                });
+
+                function updateCountdown() {
+                    if (!prayers.value.length) return;
+                    const now = new Date();
+                    const current = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+                    
+                    let target = nextPrayer.value.minutes * 60;
+                    if (target <= current) target += 86400;
+                    
+                    let diff = target - current;
+                    if (diff < 0) diff += 86400;
+                    
+                    const h = Math.floor(diff / 3600);
+                    diff %= 3600;
+                    const m = Math.floor(diff / 60);
+                    const s = diff % 60;
+                    
+                    countdown.value = 
+                        `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
+                    
+                    updateCurrent();
+                    
+                    const stored = localStorage.getItem("prayerDate");
+                    const today = getTodayKey();
+                    if (stored && stored !== today && navigator.onLine) {
+                        buildPrayerTimes();
+                    }
+                }
 
                 async function buildPrayerTimes() {
                     loading.value = true;
                     try {
-                        const url =
-                            `https://api.aladhan.com/v1/timingsByCity?city=${encodeURIComponent(city.value)}&country=Yemen&method=4`;
+                        const cityName = city.value || 'صنعاء';
+                        const countryName = countryInput.value || 'Yemen';
+                        const method = Number(calculationMethod.value) || 4;
+                        
+                        const url = `https://api.aladhan.com/v1/timingsByCity?city=${encodeURIComponent(cityName)}&country=${encodeURIComponent(countryName)}&method=${method}`;
+                        
+                        console.log(`📡 جلب مواقيت الصلاة لـ ${cityName}, ${countryName} (طريقة ${method})`);
+                        
                         const response = await fetch(url);
                         if (!response.ok) throw new Error('فشل في جلب المواقيت');
                         const data = await response.json();
+                        
                         if (data.code !== 200) throw new Error('خطأ في الاستجابة');
+                        
                         const timings = data.data.timings;
+                        
                         prayers.value = [
                             { key: "Fajr", label: "الفجر", time: timings.Fajr },
                             { key: "Sunrise", label: "الشروق", time: timings.Sunrise },
@@ -2694,40 +2568,56 @@
                             { key: "Maghrib", label: "المغرب", time: timings.Maghrib },
                             { key: "Isha", label: "العشاء", time: timings.Isha }
                         ].map(p => {
-                            const parts = p.time.split(':');
-                            const minutes = Number(parts[0]) * 60 + Number(parts[1]);
-                            return { ...p, minutes, current: false };
+                            let timeStr = p.time;
+                            timeStr = timeStr.replace(/\s*\(.*\)\s*/, '').trim();
+                            const parts = timeStr.split(':');
+                            if (parts.length >= 2) {
+                                const hours = parseInt(parts[0]);
+                                const minutes = parseInt(parts[1]);
+                                const minutesTotal = hours * 60 + minutes;
+                                return { 
+                                    ...p, 
+                                    minutes: minutesTotal, 
+                                    time: `${String(hours).padStart(2,'0')}:${String(minutes).padStart(2,'0')}` 
+                                };
+                            }
+                            return { ...p, minutes: 0 };
                         });
+                        
+                        prayers.value.sort((a, b) => a.minutes - b.minutes);
+                        
                         updateCurrent();
                         
-                        // حفظ في IndexedDB
-                        await dbManager.put('prayerTimes', {
-                            date: getTodayKey(),
-                            times: prayers.value
-                        });
+                        localStorage.setItem("prayerTimes", JSON.stringify(prayers.value));
+                        localStorage.setItem("prayerDate", getTodayKey());
                         
                         const now = new Date();
                         lastUpdate.value = now.toLocaleTimeString("ar-YE", { hour: '2-digit', minute: '2-digit' });
-                        await setData('lastUpdate', lastUpdate.value);
-                        scheduleAndroidAlarms();
+                        localStorage.setItem("lastUpdate", lastUpdate.value);
+                        
+                        setTimeout(scheduleAndroidAlarms, 1000);
+                        updateQibla();
+                        
+                        console.log('✅ تم تحديث مواقيت الصلاة بنجاح');
+                        
                     } catch (error) {
-                        console.error(error);
-                        // محاولة جلب من IndexedDB
-                        const saved = await dbManager.get('prayerTimes', getTodayKey());
+                        console.error('❌ خطأ في جلب المواقيت:', error);
+                        const saved = localStorage.getItem("prayerTimes");
                         if (saved) {
-                            prayers.value = saved.times;
+                            prayers.value = JSON.parse(saved);
                             updateCurrent();
-                        } else {
-                            prayers.value = [
-                                { key: "Fajr", label: "الفجر", time: "05:00", minutes: 300, current: false },
-                                { key: "Sunrise", label: "الشروق", time: "06:30", minutes: 390, current: false },
-                                { key: "Dhuhr", label: "الظهر", time: "12:00", minutes: 720, current: false },
-                                { key: "Asr", label: "العصر", time: "15:30", minutes: 930, current: false },
-                                { key: "Maghrib", label: "المغرب", time: "18:00", minutes: 1080, current: false },
-                                { key: "Isha", label: "العشاء", time: "19:30", minutes: 1170, current: false }
-                            ];
-                            updateCurrent();
+                            console.log('📂 تم تحميل المواقيت من التخزين المحلي');
+                            return;
                         }
+                        prayers.value = [
+                            { key: "Fajr", label: "الفجر", time: "05:00", minutes: 300, current: false },
+                            { key: "Sunrise", label: "الشروق", time: "06:30", minutes: 390, current: false },
+                            { key: "Dhuhr", label: "الظهر", time: "12:00", minutes: 720, current: false },
+                            { key: "Asr", label: "العصر", time: "15:30", minutes: 930, current: false },
+                            { key: "Maghrib", label: "المغرب", time: "18:00", minutes: 1080, current: false },
+                            { key: "Isha", label: "العشاء", time: "19:30", minutes: 1170, current: false }
+                        ];
+                        updateCurrent();
                     } finally {
                         loading.value = false;
                     }
@@ -2761,47 +2651,14 @@
                     }
                 }
 
-                function updateCurrent() {
-                    if (!prayers.value.length) return;
-                    const now = new Date();
-                    const current = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
-                    let index = -1;
-                    for (let i = 0; i < prayers.value.length; i++) {
-                        if (current >= prayers.value[i].minutes) index = i;
+                // ----- دوال إعدادات الصلاة -----
+                async function savePrayerSettings() {
+                    if (countryInput.value.trim()) {
+                        localStorage.setItem('country', countryInput.value.trim());
                     }
-                    prayers.value.forEach((p, i) => p.current = (i === index));
-                }
-
-                const nextPrayer = computed(() => {
-                    if (!prayers.value.length) return { name: "--", minutes: 0 };
-                    const now = new Date();
-                    const current = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
-                    const prayerKeys = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"];
-                    for (const key of prayerKeys) {
-                        const p = prayers.value.find(x => x.key === key);
-                        if (p && Number(p.minutes) > current) return { name: p.label, minutes: Number(p.minutes) };
-                    }
-                    const fajr = prayers.value.find(x => x.key === "Fajr");
-                    return { name: fajr ? fajr.label : "الفجر", minutes: fajr ? Number(fajr.minutes) + 1440 : 1440 };
-                });
-
-                function updateCountdown() {
-                    if (!prayers.value.length) return;
-                    const now = new Date();
-                    const current = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
-                    let target = nextPrayer.value.minutes * 60;
-                    if (target <= current) target += 86400;
-                    let diff = target - current;
-                    const h = Math.floor(diff / 3600);
-                    diff %= 3600;
-                    const m = Math.floor(diff / 60);
-                    const s = diff % 60;
-                    countdown.value =
-                        `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
-                    updateCurrent();
-                    const stored = localStorage.getItem("prayerDate");
-                    const today = getTodayKey();
-                    if (stored && stored !== today && navigator.onLine) buildPrayerTimes();
+                    localStorage.setItem('calculationMethod', calculationMethod.value);
+                    await buildPrayerTimes();
+                    alert('✅ تم حفظ الإعدادات وتحديث مواقيت الصلاة');
                 }
 
                 // ----- الأذان الصوتي -----
@@ -2884,47 +2741,30 @@
                     } catch (error) { console.error('خطأ في الإشعار:', error); }
                 }
 
-                async function checkPrePrayerReminder() {
-                    if (!prayers.value.length) return;
-                    const now = new Date();
-                    const currentMinutes = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
-                    for (const prayer of prayers.value) {
-                        if (prayer.key === 'Sunrise') continue;
-                        const diff = prayer.minutes - currentMinutes;
-                        if (diff > 0 && diff <= 10) {
-                            const todayKey = getTodayKey();
-                            const key = `pre_${todayKey}_${prayer.key}`;
-                            if (!localStorage.getItem(key)) {
-                                sendSmartNotification(
-                                    `⏰ تنبيه: ${prayer.label} بعد 10 دقائق`,
-                                    `استعد لصلاة ${prayer.label}`,
-                                    { tab: 'prayer', tag: `pre-${prayer.key}`, requireInteraction: true, vibrate: [100, 50,
-                                            100
-                                        ] }
-                                );
-                                localStorage.setItem(key, 'true');
-                            }
-                        }
-                    }
-                }
-
                 async function checkAdhanTime() {
                     if (!adhanAutoEnabled.value || !prayers.value.length) return;
+                    
                     const now = new Date();
                     const currentMinutes = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+                    const todayKey = getTodayKey();
+                    
                     for (const prayer of prayers.value) {
                         if (prayer.key === "Sunrise") continue;
-                        if (Math.abs(currentMinutes - prayer.minutes) <= 1.0) {
-                            const todayKey = getTodayKey();
+                        
+                        const diff = Math.abs(currentMinutes - prayer.minutes);
+                        
+                        if (diff <= 1.0) {
                             const key = `${todayKey}_${prayer.key}`;
                             if (!adhanPlayedToday.value[key]) {
-                                const success = await playAdhanAudio();
-                                if (success) {
-                                    sendNotification(prayer);
-                                    adhanPlayedToday.value[key] = true;
-                                    const played = JSON.parse(localStorage.getItem("adhanPlayed") || "{}");
-                                    played[key] = true;
-                                    localStorage.setItem("adhanPlayed", JSON.stringify(played));
+                                if (currentMinutes >= prayer.minutes) {
+                                    const success = await playAdhanAudio();
+                                    if (success) {
+                                        sendNotification(prayer);
+                                        adhanPlayedToday.value[key] = true;
+                                        const played = JSON.parse(localStorage.getItem("adhanPlayed") || "{}");
+                                        played[key] = true;
+                                        localStorage.setItem("adhanPlayed", JSON.stringify(played));
+                                    }
                                 }
                             }
                         }
@@ -2978,10 +2818,13 @@
                                 const address = data.address || {};
                                 const detected = address.city || address.town || address.village || address.county ||
                                     "صنعاء";
+                                const detectedCountry = address.country || address.country_code || 'Yemen';
                                 city.value = detected;
                                 cityInput.value = detected;
+                                countryInput.value = detectedCountry;
                                 gpsCity.value = detected;
-                                await setData('city', detected);
+                                localStorage.setItem('city', detected);
+                                localStorage.setItem('country', detectedCountry);
                                 await buildPrayerTimes();
                                 updateQibla();
                             } catch (e) { alert("تعذر الحصول على اسم المدينة من الموقع."); }
@@ -2994,7 +2837,7 @@
                     const value = cityInput.value.trim();
                     if (!value) { alert("يرجى إدخال اسم المدينة"); return; }
                     city.value = value;
-                    await setData('city', value);
+                    localStorage.setItem('city', value);
                     await buildPrayerTimes();
                     updateQibla();
                 }
@@ -3033,55 +2876,29 @@
                 }
 
                 // ============================================================
-                // دوال المصحف مع IndexedDB
+                // دوال المصحف
                 // ============================================================
 
                 async function loadPage(pageNumber) {
                     try {
-                        // التحقق من IndexedDB أولاً
-                        const cached = await getQuranPage(pageNumber);
-                        if (cached) {
-                            currentPageAyahs.value = cached.data.ayahs;
-                            currentSurahName.value = cached.data.surahName || '';
-                            currentSurahId.value = cached.data.surahId || '';
-                            currentJuzInfo.value = cached.data.juzInfo || '';
-                            currentHizbInfo.value = cached.data.hizbInfo || '';
-                            currentPage.value = pageNumber;
-                            await setData('quranPage', pageNumber);
-                            return;
-                        }
-
-                        // جلب من API
                         const response = await fetch(`https://api.alquran.cloud/v1/page/${pageNumber}/ar.alafasy`);
                         const data = await response.json();
                         if (data.code === 200) {
-                            const pageData = {
-                                ayahs: data.data.ayahs.map(a => ({
-                                    text: a.text,
-                                    ayah: a.numberInSurah,
-                                    surah: a.surah.name,
-                                    surahId: a.surah.number
-                                })),
-                                surahName: data.data.ayahs[0]?.surah.name || '',
-                                surahId: data.data.ayahs[0]?.surah.number || '',
-                                juzInfo: `الجزء ${data.data.ayahs[0]?.juz || '--'}`,
-                                hizbInfo: `الحزب ${data.data.ayahs[0]?.hizbQuarter || '--'}`
-                            };
-                            
-                            currentPageAyahs.value = pageData.ayahs;
-                            currentSurahName.value = pageData.surahName;
-                            currentSurahId.value = pageData.surahId;
-                            currentJuzInfo.value = pageData.juzInfo;
-                            currentHizbInfo.value = pageData.hizbInfo;
+                            currentPageAyahs.value = data.data.ayahs.map(a => ({
+                                text: a.text,
+                                ayah: a.numberInSurah,
+                                surah: a.surah.name,
+                                surahId: a.surah.number
+                            }));
+                            currentSurahName.value = data.data.ayahs[0]?.surah.name || '';
+                            currentSurahId.value = data.data.ayahs[0]?.surah.number || '';
+                            currentJuzInfo.value = `الجزء ${data.data.ayahs[0]?.juz || '--'}`;
+                            currentHizbInfo.value = `الحزب ${data.data.ayahs[0]?.hizbQuarter || '--'}`;
                             currentPage.value = pageNumber;
-                            
-                            // حفظ في IndexedDB
-                            await saveQuranPage(pageNumber, pageData);
-                            await setData('quranPage', pageNumber);
+                            localStorage.setItem('quranPage', pageNumber);
                         }
                     } catch (error) {
                         console.error('خطأ في تحميل الصفحة:', error);
-                        // محاولة بديلة
                         try {
                             const response2 = await fetch(`https://api.alquran.cloud/v1/page/${pageNumber}`);
                             const data2 = await response2.json();
@@ -3097,7 +2914,7 @@
                                 currentJuzInfo.value = `الجزء ${data2.data.ayahs[0]?.juz || '--'}`;
                                 currentHizbInfo.value = `الحزب ${data2.data.ayahs[0]?.hizbQuarter || '--'}`;
                                 currentPage.value = pageNumber;
-                                await setData('quranPage', pageNumber);
+                                localStorage.setItem('quranPage', pageNumber);
                             }
                         } catch (e2) {
                             console.error('كلتا المحاولتين فشلتا:', e2);
@@ -3410,64 +3227,6 @@
                 }
 
                 // ============================================================
-                // دوال مساعدة
-                // ============================================================
-
-                function getTodayKey() {
-                    const d = new Date();
-                    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-                }
-
-                function gregorianToHijri(gy, gm, gd) {
-                    const date = new Date(gy, gm - 1, gd, 12, 0, 0);
-                    const parts = new Intl.DateTimeFormat('ar-SA-u-ca-islamic-umalqura', {
-                        day: 'numeric',
-                        month: 'long',
-                        year: 'numeric'
-                    }).formatToParts(date);
-                    const obj = {};
-                    for (const p of parts)
-                        if (p.type !== 'literal') obj[p.type] = p.value;
-                    return {
-                        day: obj.day,
-                        month: obj.month,
-                        monthName: obj.month,
-                        year: obj.year,
-                        formatted: `${obj.day} ${obj.month} ${obj.year} هـ`
-                    };
-                }
-
-                async function getHijriDate(date) {
-                    try {
-                        if (!navigator.onLine) throw new Error('offline');
-                        const year = date.getFullYear();
-                        const month = String(date.getMonth() + 1).padStart(2, '0');
-                        const day = String(date.getDate()).padStart(2, '0');
-                        const response = await fetch(`https://api.aladhan.com/v1/gToH/${year}-${month}-${day}`, { cache: 'no-store' });
-                        if (!response.ok) throw new Error('API failed');
-                        const data = await response.json();
-                        if (data.code !== 200 || !data.data?.hijri) throw new Error('API failed');
-                        const h = data.data.hijri;
-                        return {
-                            day: h.day,
-                            month: h.month.en,
-                            monthAr: h.month.ar,
-                            year: h.year,
-                            formatted: `${h.day} ${h.month.ar} ${h.year} هـ`
-                        };
-                    } catch (error) {
-                        const h = gregorianToHijri(date.getFullYear(), date.getMonth() + 1, date.getDate());
-                        return {
-                            day: h.day,
-                            month: h.month,
-                            monthAr: h.month,
-                            year: h.year,
-                            formatted: h.formatted
-                        };
-                    }
-                }
-
-                // ============================================================
                 // دوال الأذكار
                 // ============================================================
 
@@ -3561,6 +3320,55 @@
                 // ============================================================
                 // دوال التاريخ الهجري والتقويم
                 // ============================================================
+
+                function gregorianToHijri(gy, gm, gd) {
+                    const date = new Date(gy, gm - 1, gd, 12, 0, 0);
+                    const parts = new Intl.DateTimeFormat('ar-SA-u-ca-islamic-umalqura', {
+                        day: 'numeric',
+                        month: 'long',
+                        year: 'numeric'
+                    }).formatToParts(date);
+                    const obj = {};
+                    for (const p of parts)
+                        if (p.type !== 'literal') obj[p.type] = p.value;
+                    return {
+                        day: obj.day,
+                        month: obj.month,
+                        monthName: obj.month,
+                        year: obj.year,
+                        formatted: `${obj.day} ${obj.month} ${obj.year} هـ`
+                    };
+                }
+
+                async function getHijriDate(date) {
+                    try {
+                        if (!navigator.onLine) throw new Error('offline');
+                        const year = date.getFullYear();
+                        const month = String(date.getMonth() + 1).padStart(2, '0');
+                        const day = String(date.getDate()).padStart(2, '0');
+                        const response = await fetch(`https://api.aladhan.com/v1/gToH/${year}-${month}-${day}`, { cache: 'no-store' });
+                        if (!response.ok) throw new Error('API failed');
+                        const data = await response.json();
+                        if (data.code !== 200 || !data.data?.hijri) throw new Error('API failed');
+                        const h = data.data.hijri;
+                        return {
+                            day: h.day,
+                            month: h.month.en,
+                            monthAr: h.month.ar,
+                            year: h.year,
+                            formatted: `${h.day} ${h.month.ar} ${h.year} هـ`
+                        };
+                    } catch (error) {
+                        const h = gregorianToHijri(date.getFullYear(), date.getMonth() + 1, date.getDate());
+                        return {
+                            day: h.day,
+                            month: h.month,
+                            monthAr: h.month,
+                            year: h.year,
+                            formatted: h.formatted
+                        };
+                    }
+                }
 
                 async function updateHijriToday() {
                     try {
@@ -3696,24 +3504,17 @@
                 // دورة الحياة
                 // ============================================================
 
-                onMounted(async () => {
-                    // تهيئة قاعدة البيانات
-                    try {
-                        await dbManager.open();
-                        console.log('✅ قاعدة البيانات جاهزة للاستخدام');
-                    } catch (error) {
-                        console.error('❌ فشل تهيئة قاعدة البيانات:', error);
-                    }
-
+                onMounted(() => {
                     // الأساسيات
                     checkTasbeehDate();
-                    await requestNotificationPermission();
+                    requestNotificationPermission();
                     restoreAdhanState();
                     resetAdhanState();
 
                     // الصلاة
-                    await buildPrayerTimes();
-                    setTimeout(scheduleAndroidAlarms, 2000);
+                    buildPrayerTimes().then(() => {
+                        setTimeout(scheduleAndroidAlarms, 2000);
+                    });
                     updateCountdown();
 
                     // المؤقتات
@@ -3726,15 +3527,14 @@
                             });
                         }
                     }, 5 * 60 * 1000);
-                    setInterval(() => { checkPrePrayerReminder(); }, 60000);
 
                     // المصحف
-                    await loadSurahList();
-                    await loadSurahQuickList();
+                    loadSurahList();
+                    loadSurahQuickList();
                     restoreQuranPage();
 
                     // استعادة حالة التفسير
-                    await restoreTafsirStatus();
+                    restoreTafsirStatus();
 
                     // القبلة
                     restoreManualCoords();
@@ -3742,8 +3542,8 @@
                     updateQibla();
 
                     // التاريخ الهجري والتقويم
-                    await updateHijriToday();
-                    await buildCalendarDays();
+                    updateHijriToday();
+                    buildCalendarDays();
                     setInterval(() => {
                         updateHijriToday();
                         buildCalendarDays();
@@ -3894,6 +3694,11 @@
                     buildPrayerTimes,
                     scheduleAndroidAlarms,
 
+                    // إعدادات الصلاة
+                    countryInput,
+                    calculationMethod,
+                    savePrayerSettings,
+
                     // الأذان
                     adhanPermission,
                     adhanAutoEnabled,
@@ -4021,7 +3826,7 @@
         }).mount("#app");
 
         console.log("🕌 تطبيق المسلم الذكي - النسخة النهائية 1.0");
-        console.log("📚 نظام التخزين: IndexedDB - يدعم البيانات الكبيرة");
+        console.log("📚 نظام التخزين: LocalStorage - يدعم البيانات الكبيرة");
         console.log("📚 نظام التفسير - قم بتحميل التفاسير بالضغط على زر 'تحميل التفاسير'");
 
         setTimeout(() => {
